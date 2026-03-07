@@ -7,17 +7,20 @@
 // <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-pub mod build;
-mod generated;
+
 mod observer;
 mod tdjson;
 
-pub use generated::{enums, functions, types};
+mod enums;
+mod functions;
+mod types;
 
-use enums::Update;
+
+
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::sync::atomic::{AtomicU32, Ordering};
+use crate::enums::Update;
 
 static EXTRA_COUNTER: AtomicU32 = AtomicU32::new(0);
 static OBSERVER: Lazy<observer::Observer> = Lazy::new(observer::Observer::new);
@@ -67,3 +70,4 @@ pub(crate) async fn send_request(client_id: i32, mut request: Value) -> Value {
 
     receiver.await.unwrap()
 }
+

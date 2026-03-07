@@ -18,3 +18,4 @@ description = "Rust code generator from TDLib's API definitions."
 
 [dependencies]
 tdlib-rs-parser = { workspace = true }
+convert_case = "0.6"

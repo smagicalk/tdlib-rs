@@ -42,6 +42,8 @@ system-deps = { version = "7", optional = true }
 reqwest = { version = "0.13", features = ["blocking"], optional = true }
 zip = { version = "8", optional = true }
 dirs = "6"
+tdlib-rs-gen = { workspace = true }
+tdlib-rs-parser = { workspace = true }
 
 [build-dependencies]
 tdlib-rs-gen = { workspace = true }
