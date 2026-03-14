@@ -27,10 +27,11 @@ fn main() {
     println!("cargo:rustc-link-search=native={dir}\\bin");
     println!("cargo:rustc-link-search=native={dir}\\lib");
     println!("cargo:rustc-link-lib=dylib=tdjson");
-    // println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}\\bin");
-
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}\\bin");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/bin");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
     println!("cargo:rerun-if-changed=build.rs");
-    // println!("cargo:rerun-if-env-changed=LOCAL_TDLIB_PATH");
+    println!("cargo:rerun-if-env-changed=LOCAL_TDLIB_PATH");
     // println!("cargo:rerun-if-env-changed=PROFILE");
 
 }

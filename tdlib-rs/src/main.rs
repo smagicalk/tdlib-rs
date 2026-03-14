@@ -33,10 +33,10 @@ fn load_tl(file: &str) -> std::io::Result<Vec<Definition>> {
 
 
 fn main() -> std::io::Result<()> {
-    let definitions = load_tl(r"F:\code\rust\tdlib-rs\tdlib-rs\tl\api_1.8.19.tl")?;
+    let definitions = load_tl(r"F:\code\rust\tdlib-rs\tdlib-rs\tl\api_1.8.62.tl")?;
     let mut path = Path::new(r"F:\code\rust\tdlib_test").to_path_buf();
     let mut src_path = path.join("src");
-    generate_rust_code(&mut src_path, &definitions, cfg!(feature = "bots-only-api"))?;
+    generate_rust_code(&mut src_path, &definitions, false)?;
     save(src_path.join("lib.rs"),lib_file)?;
     save(src_path.join("observer.rs"),observer_file)?;
     save(src_path.join("tdjson.rs"),tdjson_file)?;

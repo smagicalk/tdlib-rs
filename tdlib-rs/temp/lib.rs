@@ -11,9 +11,9 @@
 mod observer;
 mod tdjson;
 
-mod enums;
-mod functions;
-mod types;
+pub mod enums;
+pub mod functions;
+pub mod types;
 
 
 
