@@ -9,6 +9,7 @@
 // except according to those terms.
 
 //! 该模块作为代码生成的总协调调度中心，负责管理各代码生成子模块并为其分发数据。
+mod domain;
 mod enums;
 mod functions;
 mod metadata;

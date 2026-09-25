@@ -33,6 +33,9 @@ pub struct Definition {
 
     /// The category to which this definition belongs to.
     pub category: Category,
+
+    /// Optional top-level class description (from `//@class ... @description ...`).
+    pub class_description: Option<String>,
 }
 
 impl fmt::Display for Definition {
@@ -66,9 +69,11 @@ impl FromStr for Definition {
             return Err(ParseError::Empty);
         }
 
-        let (definition, mut docs) = {
+        let (definition, mut docs, class_description) = {
             let mut docs = HashMap::new();
             let mut comments_end = 0;
+            let mut class_description = None;
+            let mut has_class = false;
 
             if let Some(start) = definition.rfind("//")
                 && let Some(end) = definition[start..].find('\n')
@@ -88,7 +93,13 @@ impl FromStr for Definition {
                 let comment = definition[start + 1..end].replace("//-", "");
                 let comment = comment.replace("//", "").trim().to_owned();
                 if let Some((name, content)) = comment.split_once(' ') {
-                    docs.insert(name.into(), content.into());
+                    if name == "class" {
+                        has_class = true;
+                    } else if name == "description" && has_class && class_description.is_none() {
+                        class_description = Some(content.trim().to_string());
+                    } else {
+                        docs.insert(name.into(), content.into());
+                    }
                 } else {
                     docs.insert(comment, String::new());
                 }
@@ -96,7 +107,7 @@ impl FromStr for Definition {
                 offset = end;
             }
 
-            (&definition[comments_end..], docs)
+            (&definition[comments_end..], docs, class_description)
         };
 
         // Parse `(left = ty)`
@@ -165,6 +176,7 @@ impl FromStr for Definition {
             params,
             ty,
             category: Category::Types,
+            class_description,
         })
     }
 }
@@ -294,7 +306,23 @@ mod tests {
                     generic_arg: None,
                 },
                 category: Category::Types,
+                class_description: None,
             })
+        );
+    }
+
+    #[test]
+    fn parse_with_class_description() {
+        let def = "
+            //@class TestClass @description This is a class description
+            //@description This is a constructor description
+            testConstructor = TestClass";
+        let parsed = Definition::from_str(def).unwrap();
+        assert_eq!(parsed.name, "testConstructor");
+        assert_eq!(parsed.description, "This is a constructor description");
+        assert_eq!(
+            parsed.class_description,
+            Some("This is a class description".into())
         );
     }
 
