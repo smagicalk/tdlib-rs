@@ -17,6 +17,7 @@ pub(crate) struct Metadata<'a> {
     recursing_defs: HashSet<&'a String>,
     default_impl_defs: HashSet<&'a String>,
     defs_with_type: HashMap<&'a String, Vec<&'a Definition>>,
+    class_descriptions: HashMap<String, &'a str>,
 }
 
 impl<'a> Metadata<'a> {
@@ -25,6 +26,7 @@ impl<'a> Metadata<'a> {
             recursing_defs: HashSet::new(),
             default_impl_defs: HashSet::new(),
             defs_with_type: HashMap::new(),
+            class_descriptions: HashMap::new(),
         };
 
         let type_definitions = definitions
@@ -34,7 +36,7 @@ impl<'a> Metadata<'a> {
 
         let type_definition_map = type_definitions
             .iter()
-            .map(|d| (&d.name, d))
+            .map(|d| (&d.name, *d))
             .collect::<HashMap<_, _>>();
 
         type_definitions.iter().for_each(|d| {
@@ -43,10 +45,16 @@ impl<'a> Metadata<'a> {
                 .entry(&d.ty.name)
                 .or_default()
                 .push(d);
+
+            if let Some(ref class_desc) = d.class_description {
+                metadata
+                    .class_descriptions
+                    .insert(d.ty.name.clone(), class_desc.as_str());
+            }
         });
 
         type_definitions.iter().for_each(|d| {
-            if def_self_references(d, d, &metadata.defs_with_type, &mut HashSet::new()) {
+            if def_self_references(d, d, &metadata.defs_with_type, &type_definition_map, &mut HashSet::new()) {
                 metadata.recursing_defs.insert(&d.name);
             }
         });
@@ -62,6 +70,7 @@ impl<'a> Metadata<'a> {
 
     /// Returns `true` if any of the parameters of `Definition` eventually
     /// contains the same type as the `Definition` itself (meaning it recurses).
+    #[allow(dead_code)]
     pub fn is_recursive_def(&self, def: &Definition) -> bool {
         self.recursing_defs.contains(&def.name)
     }
@@ -74,12 +83,18 @@ impl<'a> Metadata<'a> {
     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {
         &self.defs_with_type[&ty.name]
     }
+
+    /// Returns the top-level class description for an enum/union type if present.
+    pub fn class_description(&self, ty_name: &str) -> Option<&'a str> {
+        self.class_descriptions.get(ty_name).copied()
+    }
 }
 
 fn def_self_references<'a>(
     root: &Definition,
     check: &'a Definition,
     defs_with_type: &'a HashMap<&String, Vec<&Definition>>,
+    type_definition_map: &'a HashMap<&String, &Definition>,
     visited: &mut HashSet<&'a String>,
 ) -> bool {
     visited.insert(&check.name);
@@ -88,14 +103,27 @@ fn def_self_references<'a>(
             return true;
         }
 
+        // 1. 如果参数为具体联合类型（大驼峰），递归检查其所有可能的子构造器
         if let Some(defs) = defs_with_type.get(&param.ty.name) {
             for def in defs {
                 if visited.contains(&def.name) {
                     continue;
                 }
-                if def_self_references(root, def, defs_with_type, visited) {
+                if def_self_references(root, def, defs_with_type, type_definition_map, visited) {
                     return true;
                 }
+            }
+        }
+
+        // 2. 如果参数为裸类型（小写首字母构造器），通过定义表反查其实际归属
+        if let Some(def) = type_definition_map.get(&param.ty.name) {
+            if def.ty.name == root.ty.name {
+                return true;
+            }
+            if !visited.contains(&def.name)
+                && def_self_references(root, def, defs_with_type, type_definition_map, visited)
+            {
+                return true;
             }
         }
     }
@@ -105,7 +133,7 @@ fn def_self_references<'a>(
 
 fn def_contains_only_bare_types<'a>(
     check: &'a Definition,
-    definition_map: &'a HashMap<&String, &&Definition>,
+    definition_map: &'a HashMap<&String, &Definition>,
 ) -> bool {
     for param in check.params.iter() {
         if !rustifier::parameters::is_builtin_type(param) && !param.ty.bare {

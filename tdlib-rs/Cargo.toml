@@ -10,6 +10,7 @@ documentation = "https://docs.rs/tdlib-rs"
 keywords = ["telegram", "tdlib", "tdjson", "tdlib-rs", "telegram-api"]
 description = "Rust wrapper around the Telegram Database Library."
 readme = "README.md"
+autoexamples = false
 
 [package.metadata.docs.rs]
 features = ["docs", "bots-only-api"]
@@ -42,6 +43,10 @@ system-deps = { version = "7", optional = true }
 reqwest = { version = "0.13", features = ["blocking"], optional = true }
 zip = { version = "8", optional = true }
 dirs = "6"
+tdlib-rs-gen = { workspace = true }
+tdlib-rs-parser = { workspace = true }
+clap = { version = "4.6.7", features = ["derive"] }
+ureq = "3.4.2"
 
 [build-dependencies]
 tdlib-rs-gen = { workspace = true }
