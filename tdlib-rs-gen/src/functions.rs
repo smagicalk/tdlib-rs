@@ -10,172 +10,211 @@
 
 //! Code to generate Rust's `fn`'s from TL definitions.
 
-use std::fs::File;
 use crate::metadata::Metadata;
 use crate::rustifier;
-use std::io::{self, Write};
 use convert_case::{Case, Casing};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
+use std::path::Path;
 use tdlib_rs_parser::tl::{Category, Definition};
-use crate::enums::write_enums_mod;
 
-/// Defines the `function` corresponding to the definition:
+/// 将单个 TL 函数定义转换为 Rust 异步函数并写入独立的源码文件，并在 functions/mod.rs 中注册与重导出
 ///
+/// 生成形如：
 /// ```ignore
-/// pub async fn name(client_id: i32, field: Type) -> Result {
-///
+/// pub async fn get_me(client_id: i32) -> Result<crate::types::User, crate::types::Error> {
+///     let request = json!({ "@type": "getMe" });
+///     let response = send_request(client_id, request).await;
+///     ...
 /// }
 /// ```
 fn write_function(
-    function_mod: &mut File,
-    function_dir: &mut std::path::PathBuf,
+    function_mod: &mut BufWriter<File>,
+    function_dir: &Path,
     def: &Definition,
     _metadata: &Metadata,
     gen_bots_only_api: bool,
 ) -> io::Result<()> {
+    // 若当前函数属于 Bot 专用且未开启 Bot API 生成，则直接跳过
     if rustifier::definitions::is_for_bots_only(def) && !gen_bots_only_api {
         return Ok(());
     }
 
-    let function_name = rustifier::definitions::function_name(&def);
+    // 获取函数的 Rust 大驼峰/规范名称
+    let function_name = rustifier::definitions::function_name(def);
+    // 转换为 snake_case 风格作为文件名
     let file_name = function_name.to_case(Case::Snake);
 
+    // 在 functions/mod.rs 中注册子模块并公开导出
     writeln!(function_mod, "mod {};", file_name)?;
-    writeln!(function_mod, "pub use {}::{};",file_name,function_name)?;
-    writeln!(function_mod, "")?;
-    writeln!(function_mod, "")?;
+    writeln!(function_mod, "pub use {}::{};", file_name, function_name)?;
+    writeln!(function_mod)?;
 
-
-    let function_path = function_dir.join(file_name).with_extension("rs");
-    let mut function_file = std::fs::OpenOptions::new()
+    // 构造独立的函数源码文件路径（如 "functions/get_me.rs"）
+    let function_path = function_dir.join(&file_name).with_extension("rs");
+    // 创建或截断目标文件
+    let function_file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(&function_path)?;
+    // 使用 BufWriter 包装写入流
+    let mut function_writer = BufWriter::new(function_file);
 
-    // Begin outermost mod
-    writeln!(function_file, "#[allow(clippy::all)]")?;
-    writeln!(function_file, "    use serde_json::json;")?;
-    writeln!(function_file, "    use crate::send_request;")?;
+    // 写入 Clippy 警告抑制宏
+    writeln!(function_writer, "#[allow(clippy::all)]")?;
+    // 引入 serde_json 用于组装 JSON 动态请求对象
+    writeln!(function_writer, "use serde_json::json;")?;
+    // 引入底层发送请求异步函数 send_request
+    writeln!(function_writer, "use crate::send_request;")?;
+    writeln!(function_writer)?;
 
-    // Documentation
-    writeln!(function_file, "{}", rustifier::definitions::description(def, ""))?;
-    writeln!(function_file, "/// # Arguments")?;
+    // 输出该函数的完整文档注释
+    writeln!(function_writer, "{}", rustifier::definitions::description(def, ""))?;
+    writeln!(function_writer, "/// # Arguments")?;
+    // 遍历生成每个入参的文档注释
     for param in def.params.iter() {
         if rustifier::parameters::is_for_bots_only(param) && !gen_bots_only_api {
             continue;
         }
 
         writeln!(
-            function_file,
+            function_writer,
             "/// * `{}` - {}",
             rustifier::parameters::attr_name(param),
-            param.description.replace('\n', "\n    /// ")
+            param.description.replace('\n', "\n/// ")
         )?;
     }
+    // 添加用于通信的目标 client_id 参数说明
     writeln!(
-        function_file,
+        function_writer,
         "/// * `client_id` - The client id to send the request to"
     )?;
 
-    // Function
-    writeln!(function_file, "#[allow(clippy::too_many_arguments)]")?;
+    // 标记抑制过多参数告警（部分 TDLib 接口包含十几个参数）
+    writeln!(function_writer, "#[allow(clippy::too_many_arguments)]")?;
+    // 输出函数签名起始部分（例如 "pub async fn get_me("）
     write!(
-        function_file,
+        function_writer,
         "pub async fn {}(",
         rustifier::definitions::function_name(def)
     )?;
+
+    // 遍历输出各个形参及其类型
     for param in def.params.iter() {
         if rustifier::parameters::is_for_bots_only(param) && !gen_bots_only_api {
             continue;
         }
 
-        write!(function_file, "{}: ", rustifier::parameters::attr_name(param))?;
+        // 输出参数名及冒号
+        write!(function_writer, "{}: ", rustifier::parameters::attr_name(param))?;
 
+        // 判断该参数是否可选
         let is_optional = rustifier::parameters::is_optional(param);
         if is_optional {
-            write!(function_file, "Option<")?;
+            write!(function_writer, "Option<")?;
         }
-        write!(function_file, "{}", rustifier::parameters::qual_name(param))?;
+        // 输出参数类型的完整限定名
+        write!(function_writer, "{}", rustifier::parameters::qual_name(param))?;
         if is_optional {
-            write!(function_file, ">")?;
+            write!(function_writer, ">")?;
         }
 
-        write!(function_file, ", ")?;
+        // 参数间用逗号和空格分隔
+        write!(function_writer, ", ")?;
     }
 
+    // 每个请求函数必须携带 client_id 参数，并返回 Result<返回类型, Error>
     writeln!(
-        function_file,
+        function_writer,
         "client_id: i32) -> Result<{}, crate::types::Error> {{",
         rustifier::types::qual_name(&def.ty, false)
     )?;
 
-    // Compose request
-    writeln!(function_file, "    let request = json!({{")?;
-    writeln!(function_file, "        \"@type\": \"{}\",", def.name)?;
+    // 组装 JSON 请求体：以 @type 标明调用的接口名称
+    writeln!(function_writer, "    let request = json!({{")?;
+    writeln!(function_writer, "        \"@type\": \"{}\",", def.name)?;
+    // 将 Rust 入参映射为 JSON 字段
     for param in def.params.iter() {
         if rustifier::parameters::is_for_bots_only(param) && !gen_bots_only_api {
             continue;
         }
 
         writeln!(
-            function_file,
+            function_writer,
             "        \"{0}\": {1},",
             param.name,
             rustifier::parameters::attr_name(param),
         )?;
     }
-    writeln!(function_file, "        }});")?;
+    writeln!(function_writer, "    }});")?;
 
-    // Send request
+    // 发起异步请求并等待底层响应返回
     writeln!(
-        function_file,
+        function_writer,
         "    let response = send_request(client_id, request).await;"
     )?;
-    writeln!(function_file, "    if response[\"@type\"] == \"error\" {{")?;
+    // 检查响应中的 @type 是否为 "error"，若是则反序列化为 Error 类型返回 Err
+    writeln!(function_writer, "    if response[\"@type\"] == \"error\" {{")?;
     writeln!(
-        function_file,
-        "        return Err(serde_json::from_value(response).unwrap())"
+        function_writer,
+        "        return Err(serde_json::from_value(response).unwrap());"
     )?;
-    writeln!(function_file, "    }}")?;
+    writeln!(function_writer, "    }}")?;
 
+    // 如果返回类型是 Ok（无实际数据 payload），则返回 Ok(())
     if rustifier::types::is_ok(&def.ty) {
-        writeln!(function_file, "    Ok(())")?;
+        writeln!(function_writer, "    Ok(())")?;
     } else {
+        // 否则将 JSON 响应体反序列化为对应的具体数据类型并返回
         writeln!(
-            function_file,
+            function_writer,
             "    Ok(serde_json::from_value(response).unwrap())"
         )?;
     }
 
-    writeln!(function_file, "}}")?;
+    // 闭合函数体大括号
+    writeln!(function_writer, "}}")?;
+    // 刷新缓冲区
+    function_writer.flush()?;
     Ok(())
 }
 
-
-/// Write the entire module dedicated to functions.
+/// 生成 `functions` 模块目录，写入 `functions/mod.rs` 并为每个 API 生成对应的请求函数
 pub(crate) fn write_functions_mod(
-    mut function_dir: &mut std::path::PathBuf,
+    function_dir: &Path,
     definitions: &[Definition],
     metadata: &Metadata,
     gen_bots_only_api: bool,
 ) -> io::Result<()> {
-
-
+    // 构造 functions/mod.rs 文件路径
     let function_mod_path = function_dir.join("mod.rs");
-    let mut function_mod_file =  std::fs::OpenOptions::new()
+    // 创建或截断 functions/mod.rs
+    let function_mod_file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
         .open(&function_mod_path)?;
+    // 使用 BufWriter 包装写入流
+    let mut function_mod_writer = BufWriter::new(function_mod_file);
 
-
+    // 筛选出属于 Category::Functions 的所有方法定义
     let functions = definitions
         .iter()
         .filter(|d| d.category == Category::Functions);
 
+    // 逐个生成函数文件并在 functions/mod.rs 中导出
     for definition in functions {
-        write_function(&mut function_mod_file,&mut function_dir, definition, metadata, gen_bots_only_api)?;
+        write_function(
+            &mut function_mod_writer,
+            function_dir,
+            definition,
+            metadata,
+            gen_bots_only_api,
+        )?;
     }
 
+    // 刷新 mod.rs 写入缓冲
+    function_mod_writer.flush()?;
     Ok(())
 }
